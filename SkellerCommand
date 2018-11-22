@@ -1,0 +1,529 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using System.Linq;
+
+public class SkellerCommand : MonoBehaviour
+{
+
+    private static SkellerCommand _sc;
+
+    public static SkellerCommand sc
+    {
+        get
+        {
+            if(_sc == null)
+            {
+                _sc = GameObject.Find("Player").GetComponent<SkellerCommand>();
+            }
+            return _sc;
+        }
+    }
+
+
+    public List<Skeller> skellers = new List<Skeller>();
+    public Skeller attackPrefab;
+    public Skeller rangedPrefab;
+    public Skeller defendPrefab;
+    Skeller currentType;
+
+    public Banner banner;
+
+    public int skellerCount;
+
+    public void AddSkeller(Skeller s)
+    {
+        if(skellers.IndexOf(s) == -1)
+        {
+            skellers.Add(s);
+            skellerCount++;
+        }
+        if (availableSkellers.IndexOf(s) == -1)
+        {
+            availableSkellers.Add(s);
+        }
+        if(s.unitType != CharUnit.UnitType.ranged)
+        {
+            s.detectRange = s.detectRangeDef;
+            s.detect.radius = s.detectRangeDef;
+        }
+        
+        selfUnit.AddChar(s);
+        selfUnit.AssignChunks();
+    }
+
+    public void RemoveSkeller(Skeller s)
+    {
+        skellers.Remove(s);
+        skellerCount--;
+    }
+
+    public Unit selfUnit;
+
+    public Vector3 mousePos;
+
+    // Use this for initialization
+    void Awake()
+    {
+        rClickInit = Vector3.zero;
+        rClickCurrent = Vector3.zero;
+        //selfOrder = new Order();
+        //selfOrder.destination = transform;
+    }
+
+    private void Start()
+    {
+        selfUnit.AddFormationPoint(transform.position);
+        skelType = Skeller.UnitType.infantry;
+        currentType = attackPrefab;
+    }
+
+    //public Order currentOrder;
+    //public Order selfOrder;
+
+    public List<Skeller> selectedSkellers = new List<Skeller>();
+    public List<Skeller> availableSkellers = new List<Skeller>();
+    public List<Skeller> busySkellers = new List<Skeller>();
+
+    public Skeller.UnitType skelType;
+
+    List<Skeller> filt(List<Skeller> l, Skeller.UnitType t)
+    {
+        List<Skeller> _l = new List<Skeller>(l);
+        if (t == Skeller.UnitType.none)
+            return _l;
+
+        return _l.Where(x => x.unitType == t).ToList();
+    }
+
+    int SkelCount(Skeller.UnitType t)
+    {
+        return filt(skellers, t).Count;
+    }
+
+    int lastSelCount;
+
+
+    // Update is called once per frame
+    float last = 0f;
+    public float selectRate = .1f;
+
+    public float selectTime = .1f;
+    public float selectRadius = 0f;
+
+    public Selector selectCircle;
+    Vector3 mouseHit;
+
+    public LayerMask mask;
+    Vector3 rClickInit;
+    Vector3 rClickCurrent;
+
+    public UnityEngine.UI.Text infantryCountText;
+    public UnityEngine.UI.Text rangedCountText;
+    public UnityEngine.UI.Text pikeCountText;
+    public UnityEngine.UI.Image infantryIcon;
+    public UnityEngine.UI.Image rangedIcon;
+    public UnityEngine.UI.Image pikeIcon;
+
+    Vector2 selected = new Vector2(150, 150);
+    Vector2 notSelected = new Vector2(100, 100);
+    Vector2 normalSize = new Vector2(100, 100);
+    public float smoothTime = 10f;
+
+    float timer;
+    int iconNumber;
+    
+    void iconSwitch(UnityEngine.UI. Image grower, UnityEngine.UI.Image shower1, UnityEngine.UI.Image shower2)
+    {
+        grower.rectTransform.sizeDelta = Vector2.Lerp(grower.rectTransform.sizeDelta, selected, timer * smoothTime);
+        shower1.rectTransform.sizeDelta = Vector2.Lerp(shower1.rectTransform.sizeDelta, notSelected, timer * smoothTime);
+        shower2.rectTransform.sizeDelta = Vector2.Lerp(shower2.rectTransform.sizeDelta, notSelected, timer * smoothTime);
+    }
+
+    public Unit unit;
+    CharUnit selectedChar;
+    Vector3 lastWayPoint;
+
+    public List<Unit> units = new List<Unit>();
+
+    void CreateUnit()
+    {
+
+    }
+
+    public LayerMask unitMask;
+    public List<Skeller> filteredSkels = new List<Skeller>();
+    int sentSkelCount = 0;
+    public Vector3 offset = Vector3.zero;
+    float timeSinceLastClick = 0f;
+    float timeSinceLastDoubleClick = 0f;
+
+    public bool lm;
+    public bool rm;
+
+    public int SkellerSendRate;
+    public LayerMask BannerMask;
+
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.Return))
+        {
+            Application.LoadLevel(1);
+        }
+
+        //selfOrder.destination = transform;
+        timer += Time.deltaTime;
+        timeSinceLastClick += Time.deltaTime;
+        timeSinceLastDoubleClick += Time.deltaTime;
+
+        //moved UI stuff to SkellerSelect()
+        SkellerSelect();
+        RaiseSkellers();
+
+        RaycastHit hit;
+
+        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+
+        if(Physics.Raycast(ray, out hit, 100f,BannerMask))
+        {
+            mousePos = hit.point;
+            mousePos.y = 0;
+            banner.transform.position = mousePos;
+        }
+
+
+        //mouse over unit
+        if (Physics.Raycast(ray, out hit, 100f, unitMask))
+        {
+            var point = hit.point;
+            point.y = 0f;
+
+            mousePos = point;
+
+            CharUnit hitChar = hit.transform.GetComponentInParent<CharUnit>();
+            if (!lm && hitChar && !hitChar.isHuman && hitChar.move.unit)
+            {
+                unit = hitChar.move.unit;
+
+                unit.isMouseOver = true;
+
+                if (Input.GetMouseButtonDown(0))
+                {
+                    
+                }
+            }
+        }
+        else if (unit)
+        {
+            unit.isMouseOver = false;
+        }
+
+        //R click creates unit
+        if (Input.GetMouseButtonDown(1))// && selectTime = 0f)
+        {
+            rm = true;
+            if(iconNumber == 4)
+            {
+                filteredSkels = availableSkellers;
+            }
+            filteredSkels = filt(availableSkellers, skelType);
+            //SkellerSendRate = Mathf.CeilToInt(filteredSkels.Count / 20f);
+        }
+
+        int skellersSent = 0;
+        //Hold R Clikc shoots skellers
+        if (Input.GetMouseButton(1))
+        {
+            rm = true;
+
+            if(skelType == CharUnit.UnitType.ranged)
+            {
+                filt(availableSkellers, CharUnit.UnitType.ranged).ForEach(x => x.AttackGround(banner.transform.position));
+            }
+            selectTime += Time.deltaTime;
+
+            for (int i = 0; i < SkellerSendRate; i++)
+            {
+                if (filteredSkels.Count > 0)
+                {
+                    Skeller s = filteredSkels[0];
+                    skellersSent++;
+                    filteredSkels.RemoveAt(0);
+                    
+                    //unit.AddChar(s);
+                    if(skelType == CharUnit.UnitType.ranged)
+                    {
+                        if((banner.transform.position - transform.position).x < 0)
+                        {
+                            s.move.SetFacing(false);
+                        }
+                        else
+                        {
+                            s.move.SetFacing(true);
+                        }
+                        s.AttackGround(banner.transform.position);
+                    }
+                    else
+                    {
+                        s.detectRange = s.detectRangeAtk;
+                        s.detect.radius = s.detectRangeAtk;
+                        availableSkellers.Remove(s);
+                        selfUnit.RemoveChar(s);
+                        var rad = Mathf.Log(skellersSent);
+                        var circle = Random.insideUnitCircle * rad;
+                        var _offset = new Vector3(circle.x, 0f, circle.y);
+                        s.move.SetTarget(banner.transform.position);
+                        s.move.detached = true;
+                    }
+                }
+            }
+
+            selectTime = 0f;
+        }
+        
+
+
+        //finalize formation
+        if (Input.GetMouseButtonUp(1))
+        {
+            rm = false;
+            skellersSent = 0;
+
+
+            //unit.highlightChars = false;
+            //unit.isSelected = false;
+            //unit.path.canMove = true;
+            //unit = null;
+
+            //unit.CalculatePositions();
+
+            rClickInit = Vector3.zero;
+            selectRate = .1f;
+            selectRadius = 0f;
+
+            rClickInit = Vector3.zero;
+
+            availableSkellers.ForEach(x => x.attackGround = false);
+            //skelType = Skeller.UnitType.none;
+
+            timer = 0f;
+            iconNumber = 4;
+        }
+
+        //l click drag draws path
+        if (Input.GetMouseButton(0))
+        {
+            RaycastHit h;
+            Ray r = Camera.main.ScreenPointToRay(Input.mousePosition);
+
+            if (unit && Physics.Raycast(r, out h))
+            {
+                var point = h.point; point.y = 0;
+
+                /*
+                if (!lm)
+                {
+                    offset = unit.Pos() - point;
+                    offset.y = 0;
+
+                    unit.WPs.Clear();
+                    unit.ClearMarkers();
+                }
+
+                if (!unit.isMouseOver && (unit.WPs.Count == 0 ||
+                    Vector3.Distance(unit.WPs.Last(),point + offset) > 3f))
+                {
+                    unit.AddWP(point + offset);
+                }
+                //unit.path.destination = hit.point;
+                */
+            }
+
+            lm = true;
+        }
+
+        if (Input.GetMouseButtonUp(0))
+        {
+            lm = false;
+            /*
+            RaycastHit hit2;
+            if (unit && Physics.Raycast(ray, out hit2, 100f, unitMask)) 
+            {
+                Character c = hit2.transform.GetComponentInParent<Character>();
+                Unit u = c.move.unit;
+
+                if (u && c)
+                {
+                    if (!u.isAI && u != unit && u != selfUnit)
+                    {
+                        u.Merge(unit);
+                    }
+                    if (u.isAI)
+                    {
+                        unit.Attack(u);
+                        unit.AddWP(mousePos);
+                    }
+                    if (u == unit || u == selfUnit)
+                    {
+                        unit.isSelected = true;
+
+                        if (timeSinceLastClick < .2f && timeSinceLastDoubleClick > .5f) // double click
+                        {
+                            timeSinceLastDoubleClick = 0f;
+                            Debug.Log("recall");
+                            unit.Recall();
+                        }
+                    }
+                }
+                else
+                {
+                }
+            }
+            */
+            timeSinceLastClick = 0f;
+            //if (unit)unit.isSelected = false;
+        }
+
+        infantryCountText.text = "Infantry (1): " + SkelCount(Skeller.UnitType.infantry).ToString();
+        rangedCountText.text = "Ranged (2): " + SkelCount(Skeller.UnitType.ranged).ToString();
+        pikeCountText.text = "Pike (3): " + SkelCount(Skeller.UnitType.pike).ToString();
+    }
+
+    
+
+    public float offsetMultiplier = 1f;
+
+    Vector3 Offset()
+    {
+        float multiplier = 1f / Mathf.Clamp(Vector3.Distance(rClickInit, rClickCurrent),1f,10f);
+        var v = Random.insideUnitSphere.normalized * Mathf.Clamp(Mathf.Log(multiplier * selectedSkellers.Count), 0, 100);
+        v.y = 0f;
+        return v;
+    }
+
+    public Vector3 OffsetAvailable()
+    {
+        var v = Random.insideUnitSphere.normalized * Mathf.Clamp(Mathf.Log(offsetMultiplier * availableSkellers.Count), 0, 100);
+        v.y = 0f;
+        return v;
+    }
+
+    void SkellerSelect()
+    {
+        if (Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Space))
+        {
+            if(skelType == Skeller.UnitType.infantry)
+            {
+                iconNumber = 4;
+            }
+
+            skelType = Skeller.UnitType.infantry;
+            currentType = attackPrefab;
+            timer = 0f;
+            iconNumber = 1;
+        }
+        else if (Input.GetKeyDown(KeyCode.Alpha2) || Input.GetKeyDown(KeyCode.LeftShift))
+        {
+            skelType = Skeller.UnitType.ranged;
+            currentType = rangedPrefab;
+            timer = 0f;
+            iconNumber = 2;
+        }
+        else if (Input.GetKeyDown(KeyCode.Alpha3) || Input.GetKeyDown(KeyCode.LeftControl))
+        {
+            skelType = Skeller.UnitType.pike;
+            currentType = defendPrefab;
+            timer = 0f;
+            iconNumber = 3;
+        }
+
+        if (iconNumber == 1)
+        {
+            iconSwitch(infantryIcon, pikeIcon, rangedIcon);
+        }
+        else if (iconNumber == 2)
+        {
+            iconSwitch(rangedIcon, infantryIcon, pikeIcon);
+        }
+        else if (iconNumber == 3)
+        {
+            iconSwitch(pikeIcon, rangedIcon, infantryIcon);
+        }
+
+        else if (iconNumber == 4)
+        {
+            infantryIcon.rectTransform.sizeDelta = Vector2.Lerp(infantryIcon.rectTransform.sizeDelta, normalSize, timer * smoothTime);
+            pikeIcon.rectTransform.sizeDelta = Vector2.Lerp(pikeIcon.rectTransform.sizeDelta, normalSize, timer * smoothTime);
+            rangedIcon.rectTransform.sizeDelta = Vector2.Lerp(rangedIcon.rectTransform.sizeDelta, normalSize, timer * smoothTime);
+        }
+
+        //free skellers
+
+        if (Input.GetKeyDown(KeyCode.R) || (Input.GetAxisRaw("RightTrigger") != 0))
+        {
+            CharPool.p.Spawn(currentType,transform.position + transform.right);
+        }
+    }
+
+
+    void RaiseSkellers()
+    {
+        if (Input.GetKey(KeyCode.E) || (Input.GetAxisRaw("RightTrigger") != 0))
+        {
+            //GameObject go = (GameObject)Instantiate(Resources.Load("skeller"), transform.position, Quaternion.identity);
+            selectTime += Time.deltaTime;
+
+            if (selectTime > .01f)
+            {
+                Corpses();
+                if (corpses.Count > 0)
+                {
+                    RaiseSkeller(corpses[0]);
+                    selectTime = 0f;
+                }
+                else
+                {
+
+                }
+                selectTime = 0f;
+            }
+        }
+    }
+    public GameObject raiseParticle;
+    void RaiseSkeller(Corpse c)
+    {
+        if (c == null) Debug.Log("no corpses");
+        else
+        {
+            
+
+            Skeller skel = (Skeller)CharPool.p.Spawn(CharPool.p.SkelAtk, c.transform.position); //(Skeller)Instantiate(attackPrefab, c.transform.position, Quaternion.identity);
+            Instantiate(raiseParticle, c.transform.position, Quaternion.identity);
+            skel.transform.SetParent(GameObject.Find("Skellers").transform);
+            corpses.Remove(c);
+            Destroy(c.gameObject);
+        }
+
+    }
+
+    public LayerMask corpseMask;
+    List<Corpse> corpses = new List<Corpse>();
+    List<Corpse> Corpses()
+    {
+        List<Corpse> _corpses = new List<Corpse>();
+        Collider[] cols = Physics.OverlapSphere(transform.position, 10f, corpseMask.value);
+        cols.ToList().ForEach(x =>
+        {
+            Corpse c = x.GetComponent<Corpse>();
+            if (_corpses.IndexOf(c) == -1)
+            {
+                _corpses.Add(c);
+            }
+        });
+
+        corpses = _corpses;
+        if (corpses.Count > 0)
+            return corpses;
+        else return null;
+    }
+}
