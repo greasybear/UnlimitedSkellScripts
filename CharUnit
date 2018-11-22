@@ -1,0 +1,215 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CharUnit : Character {
+
+    public CharAI AI;
+    [HideInInspector]
+    public Transform spriteTransform;
+    public Move move;
+    public UnitChunk chunk;
+
+    public enum UnitType
+    {
+        infantry,
+        ranged,
+        pike,
+        none
+    }
+
+    public UnitType unitType;
+
+    public override void Awake()
+    {
+        base.Awake();
+        move = GetComponent<Move>();
+        lr = GetComponent<LineRenderer>();
+        AI = GetComponent<CharAI>();
+        health = maxHealth;
+        detect = transform.GetChild(0).GetComponent<SphereCollider>();
+        tilNextUpdate = updateRate;
+        enemyTag = enemyType.ToString();
+        isActive = true;
+        if (highlight)
+        {
+            //highlight.enabled = false;
+        }
+    }
+
+    public override void Init()
+    {
+        base.Init();
+        move.nav.Warp(transform.position);
+    }
+
+    public override void Engage(Character ch)
+    {
+        if (ch.isActive && ch.transform != transform)
+        {
+            timeSinceLastEngaged = 0f;
+            anim.SetBool("isEngaged", true);
+
+            ch.EngagedBy.Add(this);
+            isEngaged = true;
+            aggroTarget = ch;
+
+            if (stance == Character.Stance.attack)
+            {
+                if (unitType != UnitType.ranged)
+                {
+                    move.SetTarget(ch.transform);
+                }
+            }
+            if (stance == Character.Stance.defend)
+            {
+            }
+            if (stance == Character.Stance.flee)
+            {
+                var dir = (aggroTarget.transform.position - transform.position).normalized;
+                move.SetTarget(transform.position - (dir * 10f));
+            }
+        }
+    }
+
+    public override void Disengage()
+    {
+        anim.SetBool("isEngaged", false);
+        isEngaged = false;
+        seesEnemy = false;
+        aggroTarget = null;
+        move.SetTarget(transform.position); //watch out for this when fighting around player
+    }
+
+    public override void DoAttack()
+    {
+        float randomEffect;
+        //play anim
+        move.DisableMove();
+        anim.SetTrigger("attack");
+        Invoke("Attack", attackDelay); //apply damage x seconds after anim starts
+        randomEffect = Random.Range(1, 10);
+        if (randomEffect == 1 && attackEffect)
+        {
+            Instantiate(attackEffect, new Vector3
+                (gameObject.transform.position.x, gameObject.transform.position.y + 1, gameObject.transform.position.z), Quaternion.identity);
+        }
+        if (charAudio != null && soundManager.GetComponent<SoundManager>().SoundFXCounter < soundLimit)
+        {
+            soundManager.GetComponent<SoundManager>().SoundFXCounter++;
+            SoundManager.instance.RandomizeSfx(charAudio, attackingSound1, attackingSound2, attackingSound3, attackingSound4, attackingSoung5);
+            soundManager.GetComponent<SoundManager>().SoundFXCounter--;
+        }
+    }
+
+    // do attack
+    public override void Attack()
+    {
+        //Debug.Log(transform.name + " attacks " + aggroTarget.name + " for " + c.attackPower + " damage");
+        if (unitType == UnitType.ranged)
+        {
+            //move.SetTarget(transform.position, Vector3.zero);
+            if (isEngaged)
+            {
+                Invoke("ShootProjectile", .4f);
+            }
+            else
+            {
+                ShootProjectileAtGround();
+            }
+            StartCoroutine(Pause(.4f));
+        }
+        else
+        {
+            if (aggroTarget)
+            {
+                aggroTarget.HitByEnemy(this);
+                aggroTarget.TakeDamage(attackPower);
+            }
+            //c.move.EnableMove();
+        }
+
+        move.Invoke("EnableMove", 1f);
+    }
+
+    bool pause;
+    IEnumerator Pause(float f)
+    {
+        pause = true;
+        yield return new WaitForSeconds(f);
+        pause = false;
+    }
+
+    public override void HitByEnemy(Character ch)
+    {
+        if (AI.timeSinceHit > 1f || !isEngaged)
+        {
+            ch.Engage(ch);
+            AI.timeSinceHit = 0f;
+        }
+    }
+
+    public override void Die()
+    {
+        anim.SetTrigger("isDead");
+        isActive = false;
+        if(move.unit != null)
+        {
+            move.unit.RemoveChar(this);
+        }
+        GetComponent<Collider>().enabled = false;
+        AI.EngagedBy.ForEach(x =>
+        {
+            if (x.isActive)
+            {
+                x.Victory();
+            }
+        });
+        Disengage();
+        if(type == Type.Human)
+        {
+            Invoke("DoDie", dieTime);
+        }
+        else
+        {
+            DoDie();
+        }
+    }
+
+    public override void DoDie()
+    {
+
+        if (dyingParticles != null)
+        {
+            SoundManager.instance.PlaySingle(deathSound);
+            GameObject dyingParticle = Instantiate(dyingParticles, transform.position, transform.rotation);
+            Destroy(dyingParticle, particleDestroy);
+        }
+        if (chunk)
+        {
+            chunk.RemoveChar(this);
+        }
+
+        CharPool.p.Despawn(this);
+    }
+
+
+    // Update is called once per frame
+    public override void Update () {
+        if (!move.isMoving && !isEngaged && !seesEnemy)
+        {
+            isIdle = true;
+            idleTime += Time.deltaTime;
+        }
+        else
+        {
+            isIdle = false;
+            idleTime = 0f;
+        }
+
+        if (move.detached && idleTime > 4f)
+        {
+            move.Return();
+        }
+    }
+}
